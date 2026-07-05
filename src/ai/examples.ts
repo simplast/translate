@@ -1,5 +1,5 @@
 import { streamText } from "ai";
-import { sentenceClient } from "./sentenceClient";
+import { getExamplesModel } from "./providers";
 
 const EXAMPLE_PROMPT = `请判断用户输入是单词/短语还是完整句子，并按对应格式返回。
 
@@ -25,7 +25,7 @@ Goodbye, glad to see you. → 再见，很高兴见到你。`;
 
 export function generateExamplesStream(sourceText: string) {
   const result = streamText({
-    model: sentenceClient.chat("hy3-preview"),
+    model: getExamplesModel(),
     system: EXAMPLE_PROMPT,
     prompt: sourceText,
   });

@@ -5,10 +5,17 @@ import { render, useKeyboard, useRenderer } from "@opentui/solid";
 import { translateStream } from "./ai/translate";
 import { generateExamplesStream } from "./ai/examples";
 import { StyledText, TextRenderable } from "@opentui/core";
-import { generateWordImage, downloadImage, openImage, renderImageToTerminal } from "./ai/image";
+import {
+  generateImage,
+  IMAGE_PROMPT_TEMPLATE,
+  IMAGE_NEGATIVE_PROMPT,
+  downloadImage,
+  openImage,
+  renderImageToTerminal,
+} from "./ai/image";
 
 type Message = {
-  type: "user" | "translation" | "image" | "image-error";
+  type: "user" | "translation" | "image" | "image-hint" | "image-error";
   text: string | StyledText;
 };
 
@@ -80,26 +87,30 @@ function App() {
 
   createEffect(() => {
     const query = currentQuery();
-    const { translation, examples } = resultParts();
 
-    if (!query || !isWord(query) || !translation || !examples) return;
+    if (!query || !isWord(query)) return;
     if (imageState().loading || imageState().done) return;
 
     setImageState({ loading: true, done: false });
 
-    generateWordImage(query, translation)
+    generateImage(IMAGE_PROMPT_TEMPLATE(query), IMAGE_NEGATIVE_PROMPT)
       .then(async (url) => {
         try {
+          const response = await fetch(url);
+          if (!response.ok) {
+            throw new Error(`Failed to download image: ${response.status}`);
+          }
+          const buffer = Buffer.from(await response.arrayBuffer());
           const [filePath, styledText] = await Promise.all([
-            downloadImage(url, query),
-            renderImageToTerminal(url, 50),
+            downloadImage(url, query, buffer),
+            renderImageToTerminal(buffer, 50),
           ]);
           setLastImagePath(filePath);
           const lineCount = styledText.chunks.filter((c) => c.text === "\n").length;
           setHistory((prev) => [
             ...prev,
             { type: "image", text: styledText },
-            { type: "image", text: `[${lineCount} lines · 按 ⌃o 查看原图]` as any },
+            { type: "image-hint", text: `[${lineCount} lines · 按 ⌃o 查看原图]` },
           ]);
         } catch (err: any) {
           setHistory((prev) => [
@@ -192,6 +203,14 @@ function App() {
       return <TerminalImage styledText={item.text as StyledText} />;
     }
 
+    if (item.type === "image-hint") {
+      return (
+        <text fg={THEME.muted}>
+          {item.text as string}
+        </text>
+      );
+    }
+
     if (item.type === "image-error") {
       return (
         <text fg="#ff6666">
@@ -201,7 +220,6 @@ function App() {
     }
 
     const fullText = item.text as string;
-    const { translation, examples } = resultParts();
     const firstLineBreak = fullText.indexOf("\n");
     const transPart = firstLineBreak === -1 ? fullText : fullText.slice(0, firstLineBreak);
     const restPart = firstLineBreak === -1 ? "" : fullText.slice(firstLineBreak + 1);
@@ -290,13 +308,16 @@ function App() {
                 gap={0}
               >
                 {group.map((item, itemIndex) => {
-                  const bgColor =
-                    item.type === "user"
-                      ? "#1a1025"
-                      : item.type === "image" || item.type === "image-error"
-                      ? undefined
-                      : "#0f2626";
-                  const hasPadding = item.type !== "image" && item.type !== "image-error";
+                  const isPlainImage =
+                    item.type === "image" ||
+                    item.type === "image-hint" ||
+                    item.type === "image-error";
+                  const bgColor = item.type === "user"
+                    ? "#1a1025"
+                    : isPlainImage
+                    ? undefined
+                    : "#0f2626";
+                  const hasPadding = !isPlainImage;
                   return (
                     <box
                       id={`msg-${groupIndex}-${itemIndex}`}
