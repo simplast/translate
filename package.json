@@ -1,0 +1,29 @@
+{
+  "name": "translate",
+  "module": "src/index.tsx",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun run --watch src/index.tsx"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/sharp": "^0.32.0"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@ai-sdk/openai": "^4.0.7",
+    "@babel/core": "^7.29.0",
+    "@babel/preset-typescript": "^7.28.5",
+    "@opentui/core": "^0.4.2",
+    "@opentui/solid": "^0.4.2",
+    "ai": "^7.0.15",
+    "babel-preset-solid": "1.9.12",
+    "dotenv": "^17.4.2",
+    "openai": "^6.45.0",
+    "sharp": "^0.35.3",
+    "solid-js": "1.9.12"
+  }
+}
