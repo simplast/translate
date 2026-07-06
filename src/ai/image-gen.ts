@@ -5,6 +5,9 @@
 
 import { config } from "./config";
 
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 1500;
+
 export async function generateImage(
   prompt: string,
   negativePrompt?: string,
@@ -17,31 +20,58 @@ export async function generateImage(
   }
   const url = `${baseURL}${endpoint}`;
 
-  const body =
-    vendor === "tencent-lite"
-      ? buildTencentBody(model, prompt, negativePrompt)
-      : buildOpenAIBody(model, prompt);
+  let lastError: Error | null = null;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      const body =
+        vendor === "tencent-lite"
+          ? buildTencentBody(model, prompt, negativePrompt)
+          : buildOpenAIBody(model, prompt);
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(body),
-  });
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
 
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Image API error ${response.status}: ${text}`);
+      if (!response.ok) {
+        const text = await response.text();
+        // 4xx (auth, schema, content policy) won't be fixed by retrying.
+        if (response.status >= 400 && response.status < 500) {
+          throw new Error(`Image API ${response.status}: ${text.slice(0, 200)}`);
+        }
+        // 5xx / network — retry.
+        throw new Error(`Image API ${response.status}: ${text.slice(0, 200)}`);
+      }
+
+      const data = (await response.json()) as { data?: { url?: string }[] };
+      const imageUrl = data.data?.[0]?.url;
+      if (!imageUrl) {
+        // Tencent occasionally returns 200 with empty data (rate-limit / transient).
+        // Retry after a short backoff.
+        throw new Error(
+          `Empty image data (attempt ${attempt}/${MAX_RETRIES})`,
+        );
+      }
+      return imageUrl;
+    } catch (err: any) {
+      lastError = err;
+      // 4xx errors are not retryable — bail out immediately.
+      const msg = err.message || "";
+      if (/Image API 4\d\d:/.test(msg)) break;
+      if (attempt < MAX_RETRIES) {
+        await sleep(RETRY_BASE_DELAY_MS * attempt);
+      }
+    }
   }
+  throw lastError ?? new Error("Image generation failed");
+}
 
-  const data = (await response.json()) as { data?: { url?: string }[] };
-  const imageUrl = data.data?.[0]?.url;
-  if (!imageUrl) {
-    throw new Error("No image URL returned");
-  }
-  return imageUrl;
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 function buildOpenAIBody(model: string, prompt: string) {

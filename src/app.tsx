@@ -1,6 +1,6 @@
-import { createSignal, createEffect } from "solid-js";
+import { createSignal, createEffect, onMount, onCleanup } from "solid-js";
 import { TextAttributes } from "@opentui/core";
-import type { InputRenderable } from "@opentui/core";
+import type { TextareaRenderable } from "@opentui/core";
 import { render, useKeyboard, useRenderer } from "@opentui/solid";
 import { translateStream } from "./ai/translate";
 import { generateExamplesStream } from "./ai/examples";
@@ -13,6 +13,7 @@ import {
   openImage,
   renderImageToTerminal,
 } from "./ai/image";
+import { defaultTextareaKeyBindings } from "@opentui/core";
 
 type Message = {
   type: "user" | "translation" | "image" | "image-hint" | "image-error";
@@ -69,7 +70,19 @@ function App() {
   });
   const [lastImagePath, setLastImagePath] = createSignal<string>("");
   const renderer = useRenderer();
-  let inputRef: InputRenderable | undefined;
+  let inputRef: TextareaRenderable | undefined;
+
+  onMount(() => {
+    const handleFocus = () => {
+      if (inputRef) {
+        inputRef.focus();
+      }
+    };
+    renderer.on("focus", handleFocus);
+    onCleanup(() => {
+      renderer.off("focus", handleFocus);
+    });
+  });
 
   createEffect(() => {
     const { translation, examples } = resultParts();
@@ -85,6 +98,8 @@ function App() {
     });
   });
 
+  let imageGenerationId = 0;
+
   createEffect(() => {
     const query = currentQuery();
 
@@ -92,9 +107,13 @@ function App() {
     if (imageState().loading || imageState().done) return;
 
     setImageState({ loading: true, done: false });
+    // Bump the generation id so any in-flight request from a previous query
+    // knows it has been superseded and should not write to history.
+    const generationId = ++imageGenerationId;
 
     generateImage(IMAGE_PROMPT_TEMPLATE(query), IMAGE_NEGATIVE_PROMPT)
       .then(async (url) => {
+        if (generationId !== imageGenerationId) return;
         try {
           const response = await fetch(url);
           if (!response.ok) {
@@ -105,6 +124,7 @@ function App() {
             downloadImage(url, query, buffer),
             renderImageToTerminal(buffer, 50),
           ]);
+          if (generationId !== imageGenerationId) return;
           setLastImagePath(filePath);
           const lineCount = styledText.chunks.filter((c) => c.text === "\n").length;
           setHistory((prev) => [
@@ -113,6 +133,7 @@ function App() {
             { type: "image-hint", text: `[${lineCount} lines · 按 ⌃o 查看原图]` },
           ]);
         } catch (err: any) {
+          if (generationId !== imageGenerationId) return;
           setHistory((prev) => [
             ...prev,
             { type: "image-error", text: `图片渲染失败: ${err.message || String(err)}` },
@@ -121,6 +142,7 @@ function App() {
         setImageState({ loading: false, done: true });
       })
       .catch((err: any) => {
+        if (generationId !== imageGenerationId) return;
         setHistory((prev) => [
           ...prev,
           { type: "image-error", text: `图片生成失败: ${err.message || String(err)}` },
@@ -129,7 +151,8 @@ function App() {
       });
   });
 
-  const handleSubmit = async (value: string) => {
+  const handleSubmit = async () => {
+    const value = inputRef?.plainText || "";
     const text = value.trim();
     if (!text || isTranslating()) return;
 
@@ -141,7 +164,7 @@ function App() {
     setHistory((prev) => [...prev, { type: "user", text }, { type: "translation", text: "" }]);
 
     if (inputRef) {
-      inputRef.value = "";
+      inputRef.clear();
     }
 
     const translateTask = async () => {
@@ -181,9 +204,50 @@ function App() {
   };
 
   useKeyboard((key) => {
-    if (key.name === "escape" || (key.name === "c" && key.ctrl)) {
+    if (key.name === "escape") {
+      if (renderer.hasSelection) {
+        renderer.clearSelection();
+        return;
+      }
       renderer.destroy();
       process.exit(0);
+    }
+    if (key.name === "c" && key.ctrl) {
+      if (renderer.hasSelection) {
+        const selection = renderer.getSelection();
+        if (selection) {
+          const text = selection.getSelectedText();
+          if (text) {
+            renderer.copyToClipboardOSC52(text);
+            return;
+          }
+        }
+      }
+      const focused = renderer.currentFocusedEditor;
+      if (focused && focused.hasSelection()) {
+        const sel = focused.getSelection();
+        if (sel) {
+          const text = focused.getTextRange(sel.start, sel.end);
+          if (text) {
+            renderer.copyToClipboardOSC52(text);
+            return;
+          }
+        }
+      }
+      renderer.destroy();
+      process.exit(0);
+    }
+    if (key.name === "y") {
+      if (renderer.hasSelection) {
+        const selection = renderer.getSelection();
+        if (selection) {
+          const text = selection.getSelectedText();
+          if (text) {
+            renderer.copyToClipboardOSC52(text);
+            return;
+          }
+        }
+      }
     }
     if (key.name === "o" && key.ctrl && lastImagePath()) {
       openImage(lastImagePath());
@@ -354,21 +418,35 @@ function App() {
         paddingY={0}
       >
         <text fg={THEME.secondary}>➜</text>
-        <input
+        <textarea
           ref={(el) => {
             inputRef = el;
             el.focus();
           }}
-          value=""
+          height={2}
+          initialValue=""
           placeholder={isTranslating() ? "Translating..." : "Type here..."}
-          onInput={() => {}}
-          // @ts-expect-error OpenTUI InputProps onSubmit type is intersected with Textarea's SubmitEvent handler
           onSubmit={handleSubmit}
           flexGrow={1}
           backgroundColor="#111111"
           focusedBackgroundColor="#1a1a1a"
           textColor="#FFFFFF"
           cursorColor="#00FF00"
+          wrapMode="word"
+          keyBindings={[
+            ...defaultTextareaKeyBindings.filter(
+              (b) =>
+                !(
+                  (b.name === "return" || b.name === "kpenter" || b.name === "linefeed") &&
+                  b.action === "newline" &&
+                  !b.meta
+                )
+            ),
+            { name: "return", action: "submit" },
+            { name: "kpenter", action: "submit" },
+            { name: "return", meta: true, action: "newline" },
+            { name: "kpenter", meta: true, action: "newline" },
+          ]}
         />
       </box>
     </box>
