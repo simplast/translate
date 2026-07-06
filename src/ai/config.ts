@@ -9,6 +9,7 @@ export type ChatProviderConfig = {
 };
 
 export type ImageProviderConfig = {
+  enabled: boolean;
   baseURL: string;
   apiKey: string;
   model: string;
@@ -33,6 +34,7 @@ export const config = {
     model: process.env.EXAMPLES_MODEL ?? "",
   },
   image: {
+    enabled: process.env.IMAGE_ENABLED === "true",
     baseURL: process.env.IMAGE_BASE_URL ?? "",
     apiKey: process.env.IMAGE_API_KEY ?? "",
     model: process.env.IMAGE_MODEL ?? "",

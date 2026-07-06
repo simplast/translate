@@ -14,6 +14,7 @@ import {
   renderImageToTerminal,
 } from "./ai/image";
 import { defaultTextareaKeyBindings } from "@opentui/core";
+import { config } from "./ai/config";
 
 type Message = {
   type: "user" | "translation" | "image" | "image-hint" | "image-error";
@@ -103,6 +104,7 @@ function App() {
   createEffect(() => {
     const query = currentQuery();
 
+    if (!config.image.enabled) return;
     if (!query || !isWord(query)) return;
     if (imageState().loading || imageState().done) return;
 
